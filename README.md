@@ -29,8 +29,8 @@ An AI-powered editorial assistant that helps journalists and editors follow CBC'
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/hamideshahrabi/editorial_assistant.git
-cd editorial_assistant
+git clone https://github.com/hamideshahrabi/CBC-Editorial-Assistant.git
+cd CBC-Editorial-Assistant
 ```
 
 2. Create and activate a virtual environment:
@@ -70,7 +70,7 @@ Example questions:
 ## Project Structure
 
 ```
-editorial_assistant/
+CBC-Editorial-Assistant/
 ├── data/
 │   ├── articles.json    # Article database
 │   └── policies.txt     # Editorial guidelines
