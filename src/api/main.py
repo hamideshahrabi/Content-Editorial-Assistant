@@ -14,10 +14,23 @@ import os
 import sys
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import itertools
+import nltk
+from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import TfidfVectorizer
+from nltk.tokenize import sent_tokenize, word_tokenize
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.DEBUG,  # Change to DEBUG level
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('server.log', mode='w'),  # Use 'w' mode to overwrite previous logs
+        logging.StreamHandler(sys.stdout)  # Explicitly use stdout
+    ]
+)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set logger to DEBUG level
+logger.debug("Logging initialized - DEBUG VERSION")
 
 # Force CPU usage and disable CUDA
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Completely disable CUDA
@@ -42,9 +55,21 @@ app.add_middleware(
 
 # Initialize components
 model = None
+tokenizer = None
+flan_model = None
 vector_store = None
 articles = []
 policies = ""
+
+# Download required NLTK data
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords')
 
 def clean_text(text: str) -> str:
     """Clean text by removing HTML entities and extra whitespace."""
@@ -140,13 +165,15 @@ def initialize_components():
         
         # Load Flan-T5 model and tokenizer
         logger.info("Loading Flan-T5 model and tokenizer...")
-        tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base", local_files_only=True)
-        flan_model = AutoModelForSeq2SeqLM.from_pretrained(
-            "google/flan-t5-base",
-            local_files_only=True,
-            device_map="cpu",
-            torch_dtype=torch.float32
-        )
+        if tokenizer is None:
+            tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large", local_files_only=True)
+        if flan_model is None:
+            flan_model = AutoModelForSeq2SeqLM.from_pretrained(
+                "google/flan-t5-large",
+                local_files_only=True,
+                device_map="cpu",
+                torch_dtype=torch.float32
+            )
         logger.info("Flan-T5 model and tokenizer loaded successfully")
         
         # Load data
@@ -218,8 +245,60 @@ async def root():
     logger.info("Root endpoint called")
     return {"status": "ok", "message": "CBC Editorial Assistant API is running"}
 
+def structure_policy_answer(policy_text: str, question: str) -> str:
+    """Fallback function to structure policy answers when model fails."""
+    logger.info("Fallback function called with policy text: %s", policy_text)
+    # Extract key points from policy text
+    lines = policy_text.split('\n')
+    summary = ""
+    requirements = []
+    notes = []
+    
+    # Process each line
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Skip the header
+        if line.startswith('CBC Editorial Guidelines:'):
+            continue
+            
+        # Extract requirements (numbered or bulleted points)
+        if line.startswith(('1.', '2.', '3.', '4.', '5.', '- ', '• ')):
+            requirements.append(line)
+        # Extract notes (other important information)
+        elif ':' in line or 'when' in line.lower():
+            notes.append(line)
+        # Use first non-empty line as summary
+        elif not summary:
+            summary = line
+    
+    # If no summary was found, create one from the first requirement
+    if not summary and requirements:
+        summary = requirements[0].lstrip('123456789.- ')
+    
+    # If no requirements were found, use the first note
+    if not requirements and notes:
+        requirements = [notes[0]]
+        notes = notes[1:]
+    
+    # Format the answer
+    formatted_answer = f"""SUMMARY:
+{summary}
+
+KEY REQUIREMENTS:
+{chr(10).join(f'• {req.lstrip("123456789.- ")}' for req in requirements)}
+
+ADDITIONAL NOTES:
+{chr(10).join(f'• {note}' for note in notes)}"""
+
+    logger.info("Formatted answer from fallback: %s", formatted_answer)
+    return formatted_answer
+
 @app.post("/api/qa")
 async def qa_endpoint(request: Question):
+    logger.info("QA endpoint called - DEBUG VERSION")
     try:
         question = request.question
         logger.info(f"Received question: {question}")
@@ -276,8 +355,44 @@ async def qa_endpoint(request: Question):
             logger.warning("No relevant information found")
             raise HTTPException(status_code=404, detail="No relevant information found")
         
-        # Create prompt for Flan-T5
+        # For policy questions, use the fallback function directly
         if policy_section:
+            logger.info("Policy question detected - using fallback formatting directly")
+            try:
+                answer = structure_policy_answer(policy_section['text'], question)
+                logger.info(f"Answer after fallback: {answer}")
+            except Exception as e:
+                logger.error(f"Error in fallback formatting: {str(e)}")
+                answer = "I apologize, but I couldn't generate a properly formatted answer. Please try rephrasing your question."
+        else:
+            # For non-policy questions, use the model
+            # Create prompt for Flan-T5
+            few_shot_examples = '''
+QUESTION: What are the guidelines for using anonymous sources?
+SUMMARY:
+Anonymous sources should only be used when the information is of significant public interest, the source would face serious consequences if identified, and the information cannot be obtained through on-the-record sources.
+KEY REQUIREMENTS:
+• Use anonymous sources only when necessary
+• Verify information through multiple sources
+• Clearly explain to readers why anonymity was granted
+ADDITIONAL NOTES:
+• Use descriptive terms for sources
+• Document the source's credentials
+Policy Guidelines:
+CBC Editorial Guidelines: Anonymous Sources\nAnonymous sources should only be used when:\n1. The information is of significant public interest\n2. The source would face serious consequences if identified\n3. The information cannot be obtained through on-the-record sources\nWhen using anonymous sources:\n- Verify the information through multiple sources\n- Clearly explain to readers why anonymity was granted\n- Use descriptive terms (e.g., "senior government official" instead of just "source")\n- Document the source's credentials and relationship to the story
+
+QUESTION: What are the requirements for writing headlines?
+SUMMARY:
+Headlines must be accurate, fair, and avoid sensationalism. They should reflect the content of the story and not mislead the audience.
+KEY REQUIREMENTS:
+• Be accurate and fair
+• Avoid sensationalism
+• Reflect the story content
+ADDITIONAL NOTES:
+• Headlines should not exaggerate or mislead
+Policy Guidelines:
+CBC Editorial Guidelines: Headlines\nHeadlines must be accurate, fair and avoid sensationalism. They should reflect the content of the story and not mislead the audience.\nHeadlines should not exaggerate or mislead.'''
+            context = "\n".join([f"Source: {c['source']}\nText: {c['text']}" for c in citations])
             prompt = f"""You are a CBC editorial assistant. Answer the following question about CBC's editorial guidelines.
             Your answer MUST follow this exact format:
             
@@ -293,56 +408,50 @@ async def qa_endpoint(request: Question):
             [Any important exceptions or special cases]
             
             Policy Guidelines:
-            {policy_section['text']}
-
+            {context}
+            
             Question: {question}
-
+            
             Answer:"""
-        else:
-            context = "\n".join([f"Source: {c['source']}\nText: {c['text']}" for c in citations])
-            prompt = f"""You are a CBC editorial assistant. Answer the following question about CBC's content.
-            Your answer MUST follow this exact format:
             
-            SUMMARY:
-            [Write a 1-2 sentence summary of the key information]
+            # Log the prompt for debugging
+            logger.info(f"Prompt sent to model:\n{prompt}")
             
-            KEY DETAILS:
-            • [First important detail]
-            • [Second important detail]
-            • [Third important detail]
+            # Generate answer using Flan-T5
+            inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
+            outputs = flan_model.generate(
+                inputs["input_ids"],
+                max_length=500,
+                num_beams=5,
+                temperature=0.5,
+                no_repeat_ngram_size=3,
+                length_penalty=1.2,
+                do_sample=True,
+                top_p=0.85,
+                top_k=40,
+                repetition_penalty=1.2
+            )
+            answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
             
-            CONTEXT:
-            [Any relevant background information]
+            # Log the raw model output for debugging
+            logger.info(f"Raw model output: {answer}")
             
-            Context: {context}
-
-            Question: {question}
-
-            Answer:"""
+            # Clean up the answer
+            answer = answer.strip()
+            if not answer or len(answer) < 10:
+                answer = "I apologize, but I couldn't generate a proper answer. Please try rephrasing your question."
+            
+            # Check format for non-policy questions
+            logger.info("Checking answer format for non-policy question...")
+            required_sections = ["SUMMARY:", "KEY REQUIREMENTS:", "ADDITIONAL NOTES:", "Policy Guidelines:"]
+            has_all_sections = all(section in answer for section in required_sections)
+            if not has_all_sections:
+                logger.info("Answer does not follow required format")
+                answer = "I apologize, but I couldn't generate a properly formatted answer. Please try rephrasing your question."
+            else:
+                logger.info("Answer follows required format")
         
-        # Log the prompt for debugging
-        logger.info(f"Prompt sent to model:\n{prompt}")
-        
-        # Generate answer using Flan-T5
-        inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
-        outputs = flan_model.generate(
-            inputs["input_ids"],
-            max_length=500,
-            num_beams=4,
-            temperature=0.7,
-            no_repeat_ngram_size=2,
-            length_penalty=1.0,
-            do_sample=True,
-            top_p=0.9,
-            top_k=50
-        )
-        answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        # Clean up the answer
-        answer = answer.strip()
-        if not answer or len(answer) < 10:
-            answer = "I apologize, but I couldn't generate a proper answer. Please try rephrasing your question."
-        
+        logger.info(f"Returning answer: {answer}")
         return {
             "answer": answer,
             "citations": [policy_section] if policy_section else citations
@@ -350,6 +459,153 @@ async def qa_endpoint(request: Question):
     except Exception as e:
         logger.error(f"Error in QA endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+def generate_seo_suggestions(article_content: str) -> str:
+    """Generate SEO suggestions based on article content using TF-IDF and stop word removal."""
+    try:
+        # Tokenize and clean the text
+        words = word_tokenize(article_content.lower())
+        stop_words = set(stopwords.words('english'))
+        
+        # Remove stop words and non-alphabetic tokens
+        filtered_words = [word for word in words if word.isalpha() and word not in stop_words and len(word) > 2]
+        
+        # Use TF-IDF to find important keywords
+        vectorizer = TfidfVectorizer(
+            max_features=10,
+            stop_words='english',
+            min_df=1,
+            max_df=0.9,
+            ngram_range=(1, 2)  # Include both single words and bigrams
+        )
+        
+        # Create a corpus with the article content
+        corpus = [article_content]
+        tfidf_matrix = vectorizer.fit_transform(corpus)
+        feature_names = vectorizer.get_feature_names_out()
+        
+        # Get the top keywords with their TF-IDF scores
+        scores = tfidf_matrix.toarray()[0]
+        keyword_scores = list(zip(feature_names, scores))
+        keyword_scores.sort(key=lambda x: x[1], reverse=True)
+        
+        # Format the suggestions, focusing on the most relevant terms
+        suggestions = []
+        for word, score in keyword_scores[:5]:  # Get top 5 keywords
+            if score > 0.1:  # Only include terms with significant relevance
+                suggestions.append(f"{word} ({score:.2f})")
+        
+        if suggestions:
+            return f"SEO suggestions: {', '.join(suggestions)}"
+        else:
+            # Fallback to frequency-based approach if no significant terms found
+            word_freq = {}
+            for word in filtered_words:
+                word_freq[word] = word_freq.get(word, 0) + 1
+            suggestions = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:5]
+            return f"SEO suggestions: {', '.join([f'{k} ({v})' for k, v in suggestions])}"
+    except Exception as e:
+        logger.error(f"Error in SEO suggestions: {str(e)}")
+        # Fallback to simple frequency-based approach if TF-IDF fails
+        word_freq = {}
+        for word in filtered_words:
+            word_freq[word] = word_freq.get(word, 0) + 1
+        suggestions = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:5]
+        return f"SEO suggestions: {', '.join([f'{k} ({v})' for k, v in suggestions])}"
+
+def generate_summary(article_content: str) -> str:
+    """Generate a concise summary of the article content within 280 characters."""
+    try:
+        # Use Flan-T5 model for summarization
+        prompt = f"""Summarize this article in a concise way (max 280 characters):
+
+{article_content}
+
+Summary:"""
+        
+        inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
+        outputs = model.generate(
+            **inputs,
+            max_length=280,
+            num_beams=4,
+            temperature=0.7,
+            top_p=0.9,
+            do_sample=True
+        )
+        summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Ensure the summary is not too long
+        if len(summary) > 280:
+            summary = summary[:277] + "..."
+        
+        return summary
+    except Exception as e:
+        logger.error(f"Error in summary generation: {str(e)}")
+        # Fallback to simple sentence extraction
+        sentences = sent_tokenize(article_content)
+        summary = ""
+        for sentence in sentences[:2]:
+            if len(summary + sentence) <= 280:
+                summary += sentence + " "
+            else:
+                break
+        return summary.strip()
+
+def generate_headline(article_content: str) -> str:
+    """Generate an engaging and SEO-friendly headline based on article content."""
+    try:
+        # Use Flan-T5 model for headline generation
+        prompt = f"""Generate an engaging and SEO-friendly headline for this article (max 100 characters):
+
+{article_content}
+
+Headline:"""
+        
+        inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
+        outputs = model.generate(
+            **inputs,
+            max_length=100,
+            num_beams=4,
+            temperature=0.7,
+            top_p=0.9,
+            do_sample=True
+        )
+        headline = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # Ensure the headline is not too long
+        if len(headline) > 100:
+            headline = headline[:97] + "..."
+        
+        return headline
+    except Exception as e:
+        logger.error(f"Error in headline generation: {str(e)}")
+        # Fallback to first sentence
+        sentences = sent_tokenize(article_content)
+        if sentences:
+            headline = sentences[0].strip()
+            if len(headline) > 100:
+                headline = headline[:97] + "..."
+            return headline
+        return "No headline generated"
+
+# Add new endpoints for SEO suggestions, summaries, and headlines
+@app.post("/api/seo")
+async def seo_endpoint(request: Question):
+    article_content = request.question
+    suggestions = generate_seo_suggestions(article_content)
+    return {"suggestions": suggestions}
+
+@app.post("/api/summary")
+async def summary_endpoint(request: Question):
+    article_content = request.question
+    summary = generate_summary(article_content)
+    return {"summary": summary}
+
+@app.post("/api/headline")
+async def headline_endpoint(request: Question):
+    article_content = request.question
+    headline = generate_headline(article_content)
+    return {"headline": headline}
 
 if __name__ == "__main__":
     import uvicorn
