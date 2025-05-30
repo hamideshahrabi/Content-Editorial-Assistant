@@ -1,47 +1,32 @@
 # CBC Editorial Assistant
 
-An AI-powered editorial assistant that helps journalists and editors follow CBC's editorial guidelines and access relevant information from articles and policies.
+An AI-powered editorial assistant that helps journalists and editors follow CBC's editorial guidelines and improve their content.
 
 ## Features
 
-- **Policy Question Answering**: Get detailed answers about CBC's editorial guidelines, including:
-  - Anonymous sources usage
-  - Headline writing requirements
-  - Social media guidelines
-  - Food bank coverage policies
+- **Policy Q&A**: Get answers about CBC's editorial guidelines
+- **SEO Suggestions**: Generate SEO-optimized keywords and phrases
+- **Content Summarization**: Create concise summaries of articles
+- **Headline Generation**: Generate engaging and SEO-friendly headlines
 
-- **Article Information Retrieval**: Access relevant information from CBC articles with proper citations
+## Setup
 
-- **Fast and Efficient**: Built with lightweight models for quick responses without GPU requirements
-
-## Technical Details
-
-- **Models Used**:
-  - SentenceTransformer (all-MiniLM-L6-v2) for semantic search
-  - Flan-T5-base for answer generation
-
-- **Key Components**:
-  - FastAPI backend
-  - Vector store for efficient similarity search
-  - Structured policy and article data handling
-
-## Setup and Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/hamideshahrabi/CBC-Editorial-Assistant.git
-cd CBC-Editorial-Assistant
-```
-
-2. Create and activate a virtual environment:
+1. Create a virtual environment:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. Install dependencies:
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
+```
+
+3. Download required NLTK data:
+```python
+import nltk
+nltk.download('punkt')
+nltk.download('stopwords')
 ```
 
 4. Start the server:
@@ -49,47 +34,37 @@ pip install -r requirements.txt
 python src/api/main.py
 ```
 
-The server will start at `http://localhost:8000`
+## API Endpoints
 
-## API Usage
-
-### Question Answering Endpoint
-
-```bash
-curl -X POST "http://localhost:8000/api/qa" \
-     -H "Content-Type: application/json" \
-     -d '{"question": "What are the guidelines for using anonymous sources?"}'
-```
-
-Example questions:
-- "What are the guidelines for using anonymous sources?"
-- "How should headlines be written?"
-- "What are the social media guidelines?"
-- "How should food bank coverage be handled?"
+- `POST /api/qa`: Get answers about editorial guidelines
+- `POST /api/seo`: Generate SEO suggestions
+- `POST /api/summary`: Generate article summaries
+- `POST /api/headline`: Generate headlines
 
 ## Project Structure
 
 ```
-CBC-Editorial-Assistant/
+editorial_assistant/
 ├── data/
-│   ├── articles.json    # Article database
-│   └── policies.txt     # Editorial guidelines
+│   ├── articles.json
+│   └── policies.txt
 ├── src/
 │   ├── api/
-│   │   └── main.py      # FastAPI server
-│   └── generation/
-│       └── text_generator.py
-├── tests/               # Test files
-└── requirements.txt     # Project dependencies
+│   │   └── main.py
+│   ├── generation/
+│   ├── preprocessing/
+│   └── retrieval/
+├── requirements.txt
+└── README.md
 ```
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Commit your changes (`git commit -m 'Add some feature'`)
-4. Push to the branch (`git push origin feature/your-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
