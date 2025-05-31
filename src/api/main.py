@@ -9,7 +9,7 @@ import numpy as np
 import faiss
 import logging
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional, Deque
 import os
 import sys
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
@@ -18,6 +18,9 @@ import nltk
 from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 from nltk.tokenize import sent_tokenize, word_tokenize
+from src.generation.text_generator import TextGenerator
+from collections import deque
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(
@@ -60,6 +63,8 @@ flan_model = None
 vector_store = None
 articles = []
 policies = ""
+policy_sections = []
+text_generator = None
 
 # Download required NLTK data
 try:
@@ -70,6 +75,10 @@ try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('stopwords')
+
+# Add conversation history
+MAX_HISTORY = 5
+conversation_history: Dict[str, Deque[Dict]] = {}
 
 def clean_text(text: str) -> str:
     """Clean text by removing HTML entities and extra whitespace."""
@@ -155,13 +164,17 @@ def split_policy_sections(policies: str):
 
 def initialize_components():
     """Initialize all required components for the API."""
-    global model, tokenizer, flan_model, vector_store, articles, policies, policy_sections
+    global model, tokenizer, flan_model, vector_store, articles, policies, policy_sections, text_generator
     
     try:
         # Load SentenceTransformer model
         logger.info("Loading SentenceTransformer model...")
-        model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
-        logger.info("SentenceTransformer model loaded successfully")
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        if torch.cuda.is_available():
+            model = model.to("cuda")
+            logger.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
+        else:
+            logger.info("Using CPU")
         
         # Load Flan-T5 model and tokenizer
         logger.info("Loading Flan-T5 model and tokenizer...")
@@ -233,12 +246,35 @@ def initialize_components():
         app.state.texts = texts
         app.state.policy_sections = policy_sections  # Store policy sections for reference
         
+        # Initialize text generator
+        logger.info("Initializing text generator...")
+        text_generator = TextGenerator()
+        logger.info("Text generator initialized successfully")
+        
     except Exception as e:
         logger.error(f"Error initializing components: {str(e)}")
         raise
 
 class Question(BaseModel):
     question: str
+    article_id: Optional[str] = None
+    session_id: Optional[str] = None
+
+def get_conversation_history(session_id: str) -> List[Dict]:
+    """Get conversation history for a session."""
+    if session_id not in conversation_history:
+        conversation_history[session_id] = deque(maxlen=MAX_HISTORY)
+    return list(conversation_history[session_id])
+
+def add_to_history(session_id: str, question: str, response: Dict):
+    """Add a question-response pair to the conversation history."""
+    if session_id not in conversation_history:
+        conversation_history[session_id] = deque(maxlen=MAX_HISTORY)
+    conversation_history[session_id].append({
+        "question": question,
+        "response": response,
+        "timestamp": datetime.now().isoformat()
+    })
 
 @app.get("/")
 async def root():
@@ -296,78 +332,251 @@ ADDITIONAL NOTES:
     logger.info("Formatted answer from fallback: %s", formatted_answer)
     return formatted_answer
 
+def get_query_type(question: str) -> Dict[str, float]:
+    """Determine the type of query and confidence scores."""
+    query_types = {
+        "policy": 0.0,
+        "article": 0.0,
+        "headline": 0.0,
+        "summary": 0.0
+    }
+    
+    # Policy-related keywords
+    policy_keywords = ["guideline", "policy", "rule", "standard", "requirement", "should", "must", "cbc's"]
+    # Article-related keywords
+    article_keywords = ["article", "story", "report", "news", "content"]
+    # Headline-related keywords
+    headline_keywords = ["headline", "title", "seo", "optimized"]
+    # Summary-related keywords
+    summary_keywords = ["summary", "summarize", "twitter", "social media", "snippet"]
+    
+    # Check for article ID pattern
+    if re.search(r'\[.*?\]|article id|article_id', question.lower()):
+        query_types["article"] += 0.5
+    
+    # Calculate scores based on keyword presence
+    for keyword in policy_keywords:
+        if keyword in question.lower():
+            query_types["policy"] += 0.2
+    for keyword in article_keywords:
+        if keyword in question.lower():
+            query_types["article"] += 0.2
+    for keyword in headline_keywords:
+        if keyword in question.lower():
+            query_types["headline"] += 0.2
+    for keyword in summary_keywords:
+        if keyword in question.lower():
+            query_types["summary"] += 0.2
+            
+    return query_types
+
 @app.post("/api/qa")
 async def qa_endpoint(request: Question):
     logger.info("QA endpoint called - DEBUG VERSION")
     try:
         question = request.question
+        session_id = request.session_id or "default"
+        article_id = request.article_id
         logger.info(f"Received question: {question}")
         
-        # Encode question
-        question_embedding = model.encode([question])
+        # Get conversation history
+        history = get_conversation_history(session_id)
         
-        # Search for similar content
-        logger.info("Searching for similar content...")
-        D, I = vector_store.search(question_embedding.astype("float32"), k=5)
+        # Determine query type and confidence
+        query_types = get_query_type(question)
+        max_type = max(query_types.items(), key=lambda x: x[1])
         
-        # Get relevant text
-        logger.info("Getting relevant text...")
-        citations = []
-        seen_sources = set()
-        policy_section = None
+        # Handle article ID-based queries
+        if article_id:
+            # Find the article
+            article = next((a for a in articles if a.get("content_id") == article_id), None)
+            if not article:
+                raise HTTPException(status_code=404, detail=f"Article with ID {article_id} not found")
+            
+            # Process based on query type
+            if "headline" in question.lower() or query_types["headline"] > 0.3:
+                return {
+                    "type": "headline",
+                    "data": {
+                        "headline": text_generator.generate_seo_headline(article),
+                        "article_id": article_id,
+                        "original_headline": article["content_headline"]
+                    }
+                }
+            elif "summary" in question.lower() or "twitter" in question.lower() or query_types["summary"] > 0.3:
+                return {
+                    "type": "summary",
+                    "data": {
+                        "summary": text_generator.generate_twitter_summary(article),
+                        "article_id": article_id,
+                        "original_headline": article["content_headline"]
+                    }
+                }
         
-        # First try to find a relevant policy section
-        for idx in I[0]:
-            source = app.state.sources[idx]
-            if source["type"] == "policy":
-                # Find the full policy section
-                for section in app.state.policy_sections:
-                    if section["title"] == source["title"]:
-                        policy_section = {
-                            "source": section["title"],
-                            "text": section["text"]
-                        }
-                        break
-                if policy_section:
-                    break
+        # If confidence is low, check history for context
+        if max_type[1] < 0.3 and history:
+            last_interaction = history[-1]
+            if last_interaction["response"].get("type") == "clarification_needed":
+                # Use the previous question type for clarification
+                max_type = (last_interaction["response"].get("type").split("_")[0], 0.4)
         
-        # If no policy section found, look for relevant articles
-        if not policy_section:
+        # If confidence is low, ask for clarification
+        if max_type[1] < 0.3:
+            clarification = {
+                "policy": "Would you like to know about CBC's editorial guidelines?",
+                "article": "Are you looking for information about a specific article? Please provide an article ID.",
+                "headline": "Would you like help generating a headline? Please provide an article ID.",
+                "summary": "Are you looking to create a summary for social media? Please provide an article ID."
+            }
+            return {
+                "type": "clarification_needed",
+                "message": "I'm not sure what you're looking for. " + clarification[max_type[0]],
+                "confidence": max_type[1]
+            }
+            
+        # Handle based on query type
+        if max_type[0] == "policy":
+            # Existing policy Q&A logic
+            question_embedding = model.encode([question])
+            D, I = vector_store.search(question_embedding.astype("float32"), k=3)
+            
+            # Get relevant text
+            logger.info("Getting relevant text...")
+            citations = []
+            seen_sources = set()
+            policy_section = None
+            
+            # First try to find a relevant policy section
             for idx in I[0]:
                 source = app.state.sources[idx]
-                if source["type"] == "article":
-                    source_key = f"{source['type']}:{source['title']}"
-                    if source_key in seen_sources:
-                        continue
-                    seen_sources.add(source_key)
-                    
-                    text = app.state.texts[idx]
-                    relevance_score = model.encode([text])[0] @ question_embedding[0]
-                    if relevance_score > 0.3:
-                        citations.append({
-                            "source": f"CBC Article: {source['title']}",
-                            "text": text
-                        })
-                    if len(citations) >= 3:
+                if source["type"] == "policy":
+                    # Find the full policy section
+                    for section in app.state.policy_sections:
+                        if section["title"] == source["title"]:
+                            policy_section = {
+                                "source": section["title"],
+                                "text": section["text"]
+                            }
+                            break
+                    if policy_section:
                         break
-        
-        if not citations and not policy_section:
-            logger.warning("No relevant information found")
-            raise HTTPException(status_code=404, detail="No relevant information found")
-        
-        # For policy questions, use the fallback function directly
-        if policy_section:
-            logger.info("Policy question detected - using fallback formatting directly")
-            try:
-                answer = structure_policy_answer(policy_section['text'], question)
-                logger.info(f"Answer after fallback: {answer}")
-            except Exception as e:
-                logger.error(f"Error in fallback formatting: {str(e)}")
-                answer = "I apologize, but I couldn't generate a properly formatted answer. Please try rephrasing your question."
-        else:
-            # For non-policy questions, use the model
-            # Create prompt for Flan-T5
-            few_shot_examples = '''
+            
+            # If no policy section found, look for relevant articles
+            if not policy_section:
+                for idx in I[0]:
+                    source = app.state.sources[idx]
+                    if source["type"] == "article":
+                        source_key = f"{source['type']}:{source['title']}"
+                        if source_key in seen_sources:
+                            continue
+                        seen_sources.add(source_key)
+                        
+                        text = app.state.texts[idx]
+                        relevance_score = model.encode([text])[0] @ question_embedding[0]
+                        if relevance_score > 0.3:
+                            citations.append({
+                                "source": f"CBC Article: {source['title']}",
+                                "text": text
+                            })
+                        if len(citations) >= 3:
+                            break
+            
+            if not citations and not policy_section:
+                logger.warning("No relevant information found")
+                raise HTTPException(status_code=404, detail="No relevant information found")
+            
+            # For policy questions, use the fallback function directly
+            if policy_section:
+                logger.info("Policy question detected - using fallback formatting directly")
+                try:
+                    # Add few-shot examples for policy questions
+                    few_shot_examples = '''
+QUESTION: What are the guidelines for using anonymous sources?
+SUMMARY:
+Anonymous sources should only be used when the information is of significant public interest, the source would face serious consequences if identified, and the information cannot be obtained through on-the-record sources.
+KEY REQUIREMENTS:
+• Use anonymous sources only when necessary
+• Verify information through multiple sources
+• Clearly explain to readers why anonymity was granted
+ADDITIONAL NOTES:
+• Use descriptive terms for sources
+• Document the source's credentials
+
+QUESTION: What are the requirements for writing headlines?
+SUMMARY:
+Headlines must be accurate, fair, and avoid sensationalism. They should reflect the content of the story and not mislead the audience.
+KEY REQUIREMENTS:
+• Be accurate and fair
+• Avoid sensationalism
+• Reflect the story content
+ADDITIONAL NOTES:
+• Headlines should not exaggerate or mislead
+
+QUESTION: What are the guidelines for reporting on weather events?
+SUMMARY:
+Weather reporting should be accurate, timely, and focused on public safety. Include specific details about conditions, timing, and potential impacts.
+KEY REQUIREMENTS:
+• Provide accurate and timely information
+• Focus on public safety implications
+• Include specific details about conditions
+• Use official sources (Environment Canada)
+ADDITIONAL NOTES:
+• Update information as conditions change
+• Include relevant warnings and advisories
+'''
+                    # Create prompt with few-shot examples
+                    prompt = f"""You are a CBC editorial assistant. Answer the following question about CBC's editorial guidelines.
+                    Your answer MUST follow this exact format:
+                    
+                    SUMMARY:
+                    [Write a 1-2 sentence summary of the key guidelines]
+                    
+                    KEY REQUIREMENTS:
+                    • [First requirement]
+                    • [Second requirement]
+                    • [Third requirement]
+                    
+                    ADDITIONAL NOTES:
+                    [Any important exceptions or special cases]
+                    
+                    Here are some examples of how to format answers:
+                    {few_shot_examples}
+                    
+                    Now, answer this question based on the following policy text:
+                    {policy_section['text']}
+                    
+                    Question: {question}
+                    
+                    Answer:"""
+                    
+                    # Generate answer using Flan-T5
+                    inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
+                    outputs = flan_model.generate(
+                        inputs["input_ids"],
+                        max_length=500,
+                        num_beams=5,
+                        temperature=0.5,
+                        no_repeat_ngram_size=3,
+                        length_penalty=1.2,
+                        do_sample=True,
+                        top_p=0.85,
+                        top_k=40,
+                        repetition_penalty=1.2
+                    )
+                    answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                    
+                    # If the model fails to generate a proper answer, use the fallback
+                    if not answer or len(answer) < 10:
+                        answer = structure_policy_answer(policy_section['text'], question)
+                    
+                    logger.info(f"Answer after fallback: {answer}")
+                except Exception as e:
+                    logger.error(f"Error in fallback formatting: {str(e)}")
+                    answer = "I apologize, but I couldn't generate a properly formatted answer. Please try rephrasing your question."
+            else:
+                # For non-policy questions, use the model
+                # Create prompt for Flan-T5
+                few_shot_examples = '''
 QUESTION: What are the guidelines for using anonymous sources?
 SUMMARY:
 Anonymous sources should only be used when the information is of significant public interest, the source would face serious consequences if identified, and the information cannot be obtained through on-the-record sources.
@@ -392,70 +601,96 @@ ADDITIONAL NOTES:
 • Headlines should not exaggerate or mislead
 Policy Guidelines:
 CBC Editorial Guidelines: Headlines\nHeadlines must be accurate, fair and avoid sensationalism. They should reflect the content of the story and not mislead the audience.\nHeadlines should not exaggerate or mislead.'''
-            context = "\n".join([f"Source: {c['source']}\nText: {c['text']}" for c in citations])
-            prompt = f"""You are a CBC editorial assistant. Answer the following question about CBC's editorial guidelines.
-            Your answer MUST follow this exact format:
+                context = "\n".join([f"Source: {c['source']}\nText: {c['text']}" for c in citations])
+                prompt = f"""You are a CBC editorial assistant. Answer the following question about CBC's editorial guidelines.
+                Your answer MUST follow this exact format:
+                
+                SUMMARY:
+                [Write a 1-2 sentence summary of the key guidelines]
+                
+                KEY REQUIREMENTS:
+                • [First requirement]
+                • [Second requirement]
+                • [Third requirement]
+                
+                ADDITIONAL NOTES:
+                [Any important exceptions or special cases]
+                
+                Policy Guidelines:
+                {context}
+                
+                Question: {question}
+                
+                Answer:"""
+                
+                # Log the prompt for debugging
+                logger.info(f"Prompt sent to model:\n{prompt}")
+                
+                # Generate answer using Flan-T5
+                inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
+                outputs = flan_model.generate(
+                    inputs["input_ids"],
+                    max_length=500,
+                    num_beams=5,
+                    temperature=0.5,
+                    no_repeat_ngram_size=3,
+                    length_penalty=1.2,
+                    do_sample=True,
+                    top_p=0.85,
+                    top_k=40,
+                    repetition_penalty=1.2
+                )
+                answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                
+                # Log the raw model output for debugging
+                logger.info(f"Raw model output: {answer}")
+                
+                # Clean up the answer
+                answer = answer.strip()
+                if not answer or len(answer) < 10:
+                    answer = "I apologize, but I couldn't generate a proper answer. Please try rephrasing your question."
+                
+                # Check format for non-policy questions
+                logger.info("Checking answer format for non-policy question...")
+                required_sections = ["SUMMARY:", "KEY REQUIREMENTS:", "ADDITIONAL NOTES:", "Policy Guidelines:"]
+                has_all_sections = all(section in answer for section in required_sections)
+                if not has_all_sections:
+                    logger.info("Answer does not follow required format")
+                    answer = "I apologize, but I couldn't generate a properly formatted answer. Please try rephrasing your question."
+                else:
+                    logger.info("Answer follows required format")
             
-            SUMMARY:
-            [Write a 1-2 sentence summary of the key guidelines]
+            logger.info(f"Returning answer: {answer}")
+            # Add to history before returning
+            response = {
+                "type": max_type[0],
+                "answer": answer,
+                "citations": [policy_section] if policy_section else citations
+            }
+            add_to_history(session_id, question, response)
             
-            KEY REQUIREMENTS:
-            • [First requirement]
-            • [Second requirement]
-            • [Third requirement]
+            return response
+        elif max_type[0] == "article":
+            return {
+                "type": "article_query",
+                "message": "Please provide an article ID to proceed.",
+                "confidence": max_type[1]
+            }
             
-            ADDITIONAL NOTES:
-            [Any important exceptions or special cases]
+        elif max_type[0] == "headline":
+            return {
+                "type": "headline_query",
+                "message": "Please provide the article content or ID to generate a headline.",
+                "confidence": max_type[1]
+            }
             
-            Policy Guidelines:
-            {context}
+        elif max_type[0] == "summary":
+            return {
+                "type": "summary_query",
+                "message": "Please provide the article content or ID to generate a summary.",
+                "confidence": max_type[1]
+            }
             
-            Question: {question}
-            
-            Answer:"""
-            
-            # Log the prompt for debugging
-            logger.info(f"Prompt sent to model:\n{prompt}")
-            
-            # Generate answer using Flan-T5
-            inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
-            outputs = flan_model.generate(
-                inputs["input_ids"],
-                max_length=500,
-                num_beams=5,
-                temperature=0.5,
-                no_repeat_ngram_size=3,
-                length_penalty=1.2,
-                do_sample=True,
-                top_p=0.85,
-                top_k=40,
-                repetition_penalty=1.2
-            )
-            answer = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
-            # Log the raw model output for debugging
-            logger.info(f"Raw model output: {answer}")
-            
-            # Clean up the answer
-            answer = answer.strip()
-            if not answer or len(answer) < 10:
-                answer = "I apologize, but I couldn't generate a proper answer. Please try rephrasing your question."
-            
-            # Check format for non-policy questions
-            logger.info("Checking answer format for non-policy question...")
-            required_sections = ["SUMMARY:", "KEY REQUIREMENTS:", "ADDITIONAL NOTES:", "Policy Guidelines:"]
-            has_all_sections = all(section in answer for section in required_sections)
-            if not has_all_sections:
-                logger.info("Answer does not follow required format")
-                answer = "I apologize, but I couldn't generate a properly formatted answer. Please try rephrasing your question."
-            else:
-                logger.info("Answer follows required format")
-        
-        logger.info(f"Returning answer: {answer}")
-        return {
-            "answer": answer,
-            "citations": [policy_section] if policy_section else citations
-        }
     except Exception as e:
         logger.error(f"Error in QA endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -507,6 +742,12 @@ def generate_seo_suggestions(article_content: str) -> str:
     except Exception as e:
         logger.error(f"Error in SEO suggestions: {str(e)}")
         # Fallback to simple frequency-based approach if TF-IDF fails
+        try:
+            words = word_tokenize(article_content.lower())
+            stop_words = set(stopwords.words('english'))
+            filtered_words = [word for word in words if word.isalpha() and word not in stop_words and len(word) > 2]
+        except Exception:
+            filtered_words = article_content.lower().split()
         word_freq = {}
         for word in filtered_words:
             word_freq[word] = word_freq.get(word, 0) + 1
@@ -524,8 +765,8 @@ def generate_summary(article_content: str) -> str:
 Summary:"""
         
         inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
-        outputs = model.generate(
-            **inputs,
+        outputs = flan_model.generate(
+            inputs["input_ids"],
             max_length=280,
             num_beams=4,
             temperature=0.7,
@@ -562,8 +803,8 @@ def generate_headline(article_content: str) -> str:
 Headline:"""
         
         inputs = tokenizer(prompt, return_tensors="pt", max_length=1024, truncation=True)
-        outputs = model.generate(
-            **inputs,
+        outputs = flan_model.generate(
+            inputs["input_ids"],
             max_length=100,
             num_beams=4,
             temperature=0.7,
@@ -591,15 +832,39 @@ Headline:"""
 # Add new endpoints for SEO suggestions, summaries, and headlines
 @app.post("/api/seo")
 async def seo_endpoint(request: Question):
-    article_content = request.question
-    suggestions = generate_seo_suggestions(article_content)
-    return {"suggestions": suggestions}
+    try:
+        article_content = request.question
+        # Create a temporary article dictionary with the content
+        article = {
+            "content_headline": "",  # Empty since we're generating it
+            "body": article_content,
+            "content_categories": [],
+            "content_tags": []
+        }
+        # Generate SEO-optimized headline
+        headline = text_generator.generate_seo_headline(article)
+        return {"headline": headline}
+    except Exception as e:
+        logger.error(f"Error in SEO endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/summary")
 async def summary_endpoint(request: Question):
-    article_content = request.question
-    summary = generate_summary(article_content)
-    return {"summary": summary}
+    try:
+        article_content = request.question
+        # Create a temporary article dictionary with the content
+        article = {
+            "content_headline": "",  # Empty since we're generating it
+            "body": article_content,
+            "content_categories": [],
+            "content_tags": []
+        }
+        # Generate Twitter-friendly summary
+        summary = text_generator.generate_twitter_summary(article)
+        return {"summary": summary}
+    except Exception as e:
+        logger.error(f"Error in summary endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/headline")
 async def headline_endpoint(request: Question):
@@ -607,8 +872,55 @@ async def headline_endpoint(request: Question):
     headline = generate_headline(article_content)
     return {"headline": headline}
 
+@app.post("/api/article")
+async def article_endpoint(request: Question):
+    """Handle article-specific queries using article ID."""
+    try:
+        if not request.article_id:
+            raise HTTPException(status_code=400, detail="Article ID is required")
+            
+        # Find the article by content_id
+        article = next((a for a in articles if a.get("content_id") == request.article_id), None)
+        if not article:
+            raise HTTPException(status_code=404, detail=f"Article with ID {request.article_id} not found")
+            
+        # Process the question
+        if "headline" in request.question.lower():
+            return {
+                "status": "success",
+                "data": {
+                    "headline": text_generator.generate_seo_headline(article),
+                    "article_id": article["content_id"],
+                    "original_headline": article["content_headline"]
+                }
+            }
+        elif "twitter" in request.question.lower() or "summary" in request.question.lower():
+            return {
+                "status": "success",
+                "data": {
+                    "summary": text_generator.generate_twitter_summary(article),
+                    "article_id": article["content_id"],
+                    "original_headline": article["content_headline"]
+                }
+            }
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail="Unsupported article query type. Supported types are: headline, twitter, summary"
+            )
+            
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error in article endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize components when the server starts."""
+    initialize_components()
+
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting server...")
-    initialize_components()
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info") 
