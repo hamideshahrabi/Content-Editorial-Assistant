@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CBC Editorial Assistant</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .chat-container {
+            height: calc(100vh - 200px);
+        }
+        .message {
+            max-width: 80%;
+            margin: 8px;
+            padding: 12px;
+            border-radius: 8px;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+            margin-left: auto;
+        }
+        .assistant-message {
+            background-color: #f5f5f5;
+            margin-right: auto;
+        }
+        .citation {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 4px;
+            padding-left: 8px;
+            border-left: 2px solid #ccc;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-3xl font-bold text-center mb-8">CBC Editorial Assistant</h1>
+        
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <div class="chat-container overflow-y-auto mb-4" id="chatContainer">
+                <!-- Messages will be added here -->
+            </div>
+            
+            <div class="flex space-x-4">
+                <input type="text" 
+                       id="questionInput" 
+                       class="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                       placeholder="Ask a question about CBC's editorial guidelines...">
+                <input type="text" 
+                       id="articleIdInput" 
+                       class="w-32 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                       placeholder="Article ID (optional)">
+                <button onclick="sendQuestion()" 
+                        class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    Send
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = Date.now().toString();
+        
+        function addMessage(content, isUser = false) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
+            
+            if (typeof content === 'string') {
+                messageDiv.textContent = content;
+            } else {
+                // Handle structured response
+                if (content.type === 'clarification_needed') {
+                    messageDiv.innerHTML = `<p>${content.message}</p>`;
+                } else if (content.type === 'policy' || content.type === 'article_query') {
+                    let html = `<p>${content.answer || content.message}</p>`;
+                    if (content.citations) {
+                        html += '<div class="citations mt-2">';
+                        content.citations.forEach(citation => {
+                            html += `<div class="citation">Source: ${citation.source}</div>`;
+                        });
+                        html += '</div>';
+                    }
+                    messageDiv.innerHTML = html;
+                } else if (content.type === 'headline' || content.type === 'summary') {
+                    messageDiv.innerHTML = `
+                        <p><strong>${content.type === 'headline' ? 'Generated Headline' : 'Generated Summary'}:</strong></p>
+                        <p>${content.data.headline || content.data.summary}</p>
+                        <div class="citation">Article ID: ${content.data.article_id}</div>
+                    `;
+                }
+            }
+            
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        async function sendQuestion() {
+            const questionInput = document.getElementById('questionInput');
+            const articleIdInput = document.getElementById('articleIdInput');
+            const question = questionInput.value.trim();
+            const articleId = articleIdInput.value.trim();
+            
+            if (!question) return;
+            
+            // Add user message
+            addMessage(question, true);
+            
+            try {
+                const response = await fetch('/api/qa', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        question,
+                        article_id: articleId || undefined,
+                        session_id: sessionId
+                    }),
+                });
+                
+                const data = await response.json();
+                addMessage(data);
+                
+                // Clear inputs
+                questionInput.value = '';
+                articleIdInput.value = '';
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('Sorry, there was an error processing your request.');
+            }
+        }
+
+        // Handle Enter key
+        document.getElementById('questionInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendQuestion();
+            }
+        });
+    </script>
+</body>
+</html> 

@@ -42,4 +42,8 @@ Thumbs.db
 
 # Project specific
 *.log
-server.log 
+server.log
+data/
+backup/
+commands.txt
+commands.md 
