@@ -1,0 +1,3 @@
+"""
+CBC Editorial Assistant package.
+""" 
