@@ -1,6 +1,14 @@
-# CBC Editorial Assistant
+# Editorial Assistant
 
-An AI-powered editorial assistant that helps journalists follow CBC's guidelines and improve their content using RAG (Retrieval-Augmented Generation).
+An AI-powered editorial assistant that helps journalists and content creators follow editorial guidelines and improve their content using RAG (Retrieval-Augmented Generation). This tool is designed for news organizations, publishing companies, and media outlets to ensure content quality and adherence to editorial standards.
+
+## Features
+
+- **Policy Q&A**: Get instant answers about editorial guidelines and policies
+- **Headline Generation**: Create SEO-optimized and social media-friendly headlines
+- **Content Summarization**: Generate concise summaries for social media and briefs
+- **Content Analysis**: Analyze articles for guideline compliance
+- **Interactive Demo**: Test the system through an easy-to-use interface
 
 ## Technical Choices
 
@@ -60,17 +68,17 @@ curl -X 'POST' \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
   -d '{
-    "question": "What are CBCs guidelines on using social media?"
+    "question": "What are the guidelines on using social media for journalists?"
   }'
 ```
 
 Response:
 ```json
 {
-  "answer": "CBC journalists must maintain professional boundaries on social media, verify information before sharing, and clearly identify themselves as CBC employees. They should avoid sharing personal opinions on controversial topics and ensure their social media presence aligns with CBC's journalistic standards.",
+  "answer": "Journalists must maintain professional boundaries on social media, verify information before sharing, and clearly identify themselves as employees. They should avoid sharing personal opinions on controversial topics and ensure their social media presence aligns with journalistic standards.",
   "citations": [
     {
-      "source": "CBC Editorial Guidelines",
+      "source": "Editorial Guidelines",
       "text": "Social media guidelines section..."
     }
   ]
@@ -129,6 +137,16 @@ The videos demonstrate:
 - API endpoint testing
 - Real-time content generation
 - Policy Q&A examples
+
+## Use Cases
+
+This editorial assistant is ideal for:
+
+- **News Organizations**: Ensure journalists follow editorial standards
+- **Publishing Companies**: Maintain consistent content quality across publications
+- **Media Outlets**: Streamline content review processes
+- **Content Teams**: Generate optimized headlines and summaries
+- **Editorial Departments**: Provide quick access to style guides and policies
 
 ## Project Structure
 ```

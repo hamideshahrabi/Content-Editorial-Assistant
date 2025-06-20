@@ -1,3 +1,3 @@
 """
-Text generation module for the CBC Editorial Assistant.
+Text generation module for the Editorial Assistant.
 """ 

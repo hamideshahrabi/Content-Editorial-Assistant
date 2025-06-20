@@ -105,7 +105,7 @@ def split_policy_sections(policies: str):
         if not line:
             continue
             
-        if line.startswith('CBC Editorial Guidelines:'):
+        if line.startswith('Editorial Guidelines:'):
             if current_title and current_section:
                 sections.append({
                     'title': current_title,
@@ -207,7 +207,7 @@ def get_query_type(question: str, history: List[Dict] = None) -> Dict[str, float
     question = question.lower()
     
     # Check for policy-related keywords
-    policy_keywords = ['policy', 'guideline', 'rule', 'standard', 'cbc', 'editorial']
+    policy_keywords = ['policy', 'guideline', 'rule', 'standard', 'editorial']
     policy_score = sum(1 for word in policy_keywords if word in question)
     
     # Check for headline-related keywords
@@ -274,7 +274,7 @@ def get_relevant_text(question: str) -> Optional[str]:
 @app.get("/")
 async def root():
     """Root endpoint."""
-    return {"message": "CBC Editorial Assistant API"}
+    return {"message": "Editorial Assistant API"}
 
 @app.post("/api/article")
 async def article_endpoint(request: Question):
@@ -314,7 +314,7 @@ async def qa_endpoint(request: Question):
         
         response = {
             'answer': text_generator.generate_answer(relevant_text, request.question),
-            'citations': [{'source': 'CBC Editorial Guidelines', 'text': relevant_text}]
+            'citations': [{'source': 'Editorial Guidelines', 'text': relevant_text}]
         }
     
     if request.session_id:

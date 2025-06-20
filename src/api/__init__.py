@@ -1,3 +1,3 @@
 """
-API module for the CBC Editorial Assistant.
+API module for the Editorial Assistant.
 """ 
