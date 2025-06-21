@@ -1,0 +1,5 @@
+1780bab Sat May 31 23:19:03 2025 Remove README_new.md from the repository
+9c4876e Sat May 31 23:18:19 2025 Restore core project files (src, data, requirements.txt, test_demo.py)
+160043c Sat May 31 23:17:06 2025 Replace README.md with the new version including video links and sample results
+bd85ee8 Sat May 31 23:14:24 2025 Overwrite README.md with the correct version including video links and sample results
+0fb7df7 Fri May 30 14:51:24 2025 Improve policy section handling in QA endpoint to include full policy text in prompt

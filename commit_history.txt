@@ -1,0 +1,29 @@
+1780bab
+Date: 2025-05-31 23:19:03 -0400
+Author: Hamideh Shahrabi
+Message: Remove README_new.md from the repository
+
+
+9c4876e
+Date: 2025-05-31 23:18:19 -0400
+Author: Hamideh Shahrabi
+Message: Restore core project files (src, data, requirements.txt, test_demo.py)
+
+
+160043c
+Date: 2025-05-31 23:17:06 -0400
+Author: Hamideh Shahrabi
+Message: Replace README.md with the new version including video links and sample results
+
+
+bd85ee8
+Date: 2025-05-31 23:14:24 -0400
+Author: Hamideh Shahrabi
+Message: Overwrite README.md with the correct version including video links and sample results
+
+
+0fb7df7
+Date: 2025-05-30 14:51:24 -0400
+Author: Hamideh Shahrabi
+Message: Improve policy section handling in QA endpoint to include full policy text in prompt
+

@@ -41,7 +41,7 @@ def split_policies(text):
     current_title = None
     
     for line in text.split("\n"):
-        if line.startswith("CBC Editorial Guidelines:"):
+        if line.startswith("Editorial Guidelines:"):
             if current_section and current_title:
                 sections.append({
                     "title": current_title,
@@ -130,7 +130,7 @@ class Question(BaseModel):
 @app.get("/")
 async def root():
     logger.info("Root endpoint called")
-    return {"status": "ok", "message": "CBC Editorial Assistant API is running"}
+    return {"status": "ok", "message": "Editorial Assistant API is running"}
 
 @app.post("/api/qa")
 async def answer_policy_question(question: Question):
@@ -176,7 +176,7 @@ async def answer_policy_question(question: Question):
                 # Only add if the paragraph is relevant to the question
                 if model.encode([most_relevant_para])[0] @ question_embedding[0] > 0.3:  # Relevance threshold
                     citations.append({
-                        "source": f"CBC Article: {source['title']}",
+                        "source": f"Article: {source['title']}",
                         "text": most_relevant_para
                     })
             else:
