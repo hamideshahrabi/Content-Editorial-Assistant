@@ -1,16 +1,48 @@
-# CBC Editorial Assistant
+# RAG Editorial Assistant
 
-An AI-powered editorial assistant that helps journalists and editors follow CBC's editorial guidelines and improve their content.
+An AI-powered editorial assistant that helps journalists and content creators follow editorial guidelines and improve their content using RAG (Retrieval-Augmented Generation). This tool is designed for news organizations, publishing companies, and media outlets to ensure content quality and adherence to editorial standards.
 
 ## Features
 
-- **Policy Q&A**: Get answers about CBC's editorial guidelines using RAG (Retrieval-Augmented Generation)
-- **SEO Suggestions**: Generate SEO-optimized headlines and content
-- **Content Summarization**: Create concise summaries of articles
-- **Headline Generation**: Generate engaging and SEO-friendly headlines
-- **Twitter Summaries**: Create social media-friendly summaries
+- **Policy Q&A**: Get instant answers about editorial guidelines and policies using RAG
+- **Headline Generation**: Create SEO-optimized and social media-friendly headlines
+- **Content Summarization**: Generate concise summaries for social media and briefs
+- **Content Analysis**: Analyze articles for guideline compliance
+- **Interactive Demo**: Test the system through an easy-to-use interface
 
-## Setup
+## Technical Choices
+
+### Models
+1. **Text Generation**: Flan-T5-large
+   - Chosen for its strong performance in text generation tasks
+   - Better at understanding context and generating coherent responses
+   - Alternative choices beyond Hugging Face:
+     - GPT-3.5/4: Better performance but higher cost and API dependency
+     - BLOOM: Multilingual but larger resource requirements
+     - LLaMA: Open source but requires more computational resources
+
+2. **Semantic Search**: SentenceTransformer (all-MiniLM-L6-v2)
+   - Efficient for semantic search with good performance
+   - Lightweight and fast inference
+   - Alternative choices:
+     - BERT: Better accuracy but slower
+     - USE (Universal Sentence Encoder): Good for multilingual but larger
+     - MPNet: Better performance but more resource-intensive
+
+3. **Vector Store**: FAISS
+   - Fast and efficient similarity search
+   - Good for large-scale vector operations
+   - Alternative choices:
+     - Pinecone: Cloud-based but requires subscription
+     - Weaviate: More features but more complex setup
+     - Milvus: Distributed but requires more infrastructure
+
+### Chunking Method
+- Semantic chunking based on paragraphs
+- Overlap between chunks to maintain context
+- Size: 512 tokens with 50 token overlap
+
+## Setup Instructions
 
 1. Create a virtual environment:
 ```bash
@@ -30,28 +62,43 @@ nltk.download('punkt')
 nltk.download('stopwords')
 ```
 
-4. Start the server:
-```bash
-uvicorn src.api.main:app --host 0.0.0.0 --port 8002
-```
-
-## Usage
-
-### Interactive Demo
-Run the interactive demo:
+4. Run the interactive demo:
 ```bash
 python test_demo.py
 ```
 
-Available commands:
-- Type a number (1-100) to view an article
-- Type 'generate' followed by the article number to generate content
-- Type 'example' to see an example interaction
-- Type 'exit' to quit
+5. Or start the API server:
+```bash
+uvicorn src.api.main:app --host 0.0.0.0 --port 8002
+```
 
-### API Endpoints
+## Sample Test Conversations
 
-1. Generate Headlines:
+### 1. Policy Q&A
+```bash
+curl -X 'POST' \
+  'http://localhost:8002/api/qa' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "question": "What are the guidelines on using social media for journalists?"
+  }'
+```
+
+Response:
+```json
+{
+  "answer": "Journalists must maintain professional boundaries on social media, verify information before sharing, and clearly identify themselves as employees. They should avoid sharing personal opinions on controversial topics and ensure their social media presence aligns with journalistic standards.",
+  "citations": [
+    {
+      "source": "Editorial Guidelines",
+      "text": "Social media guidelines section..."
+    }
+  ]
+}
+```
+
+### 2. Headline Suggestion
 ```bash
 curl -X 'POST' \
   'http://localhost:8002/api/article' \
@@ -64,18 +111,17 @@ curl -X 'POST' \
   }'
 ```
 
-2. Policy Questions:
-```bash
-curl -X 'POST' \
-  'http://localhost:8002/api/qa' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "question": "What are CBCs guidelines on using social media?"
-  }'
+Response:
+```json
+{
+  "headline": {
+    "seo_headline": "Food Bank Demand Soars 40% as Winter Approaches",
+    "social_headline": "Local food bank sees 40% increase in demand as winter nears"
+  }
+}
 ```
 
-3. Twitter Summaries:
+### 3. Tweet-style Summary
 ```bash
 curl -X 'POST' \
   'http://localhost:8002/api/qa' \
@@ -86,33 +132,46 @@ curl -X 'POST' \
   }'
 ```
 
-## Project Structure
+Response:
+```json
+{
+  "summary": "Food bank demand up 40% as winter approaches. Rising costs and economic challenges create perfect storm for families in need. #FoodBank #WinterCrisis"
+}
+```
 
+## Demo Video
+The system is demonstrated in two parts:
+
+1. Interactive Demo Walkthrough: [Watch Demo](https://www.youtube.com/watch?v=eEIpcCS46Jg)
+2. API Testing and Examples: [Watch API Demo](https://www.youtube.com/watch?v=sAtIuBn5A1E)
+
+The videos demonstrate:
+- Interactive demo usage
+- API endpoint testing
+- Real-time content generation
+- Policy Q&A examples
+
+## Use Cases
+
+This editorial assistant is ideal for:
+
+- **News Organizations**: Ensure journalists follow editorial standards
+- **Publishing Companies**: Maintain consistent content quality across publications
+- **Media Outlets**: Streamline content review processes
+- **Content Teams**: Generate optimized headlines and summaries
+- **Editorial Departments**: Provide quick access to style guides and policies
+
+## Project Structure
 ```
 editorial_assistant/
 ├── src/
-│   ├── api/
-│   │   └── main.py
-│   ├── generation/
-│   ├── preprocessing/
-│   └── retrieval/
-├── tests/
-│   ├── test_api_qa.py
-│   ├── test_article.py
-│   └── test_model.py
-├── test_demo.py
-├── requirements.txt
+│   ├── api/          # FastAPI endpoints
+│   ├── generation/   # Text generation with Flan-T5
+│   └── retrieval/    # RAG implementation
+├── test_demo.py      # Interactive demo
+├── requirements.txt  # Dependencies
 └── README.md
 ```
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
 ## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License
