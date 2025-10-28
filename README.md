@@ -4,7 +4,7 @@ An AI-powered editorial assistant that helps journalists and content creators fo
 
 ## Features
 
-- **Policy Q&A**: Get instant answers about editorial guidelines and policies using RAG
+- **Policy Q&A**: Get instant answers about editorial guidelines and policies using RAG 
 - **Headline Generation**: Create SEO-optimized and social media-friendly headlines
 - **Content Summarization**: Generate concise summaries for social media and briefs
 - **Content Analysis**: Analyze articles for guideline compliance
