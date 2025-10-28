@@ -8,7 +8,7 @@ An AI-powered editorial assistant that helps journalists and content creators fo
 - **Headline Generation**: Create SEO-optimized and social media-friendly headlines
 - **Content Summarization**: Generate concise summaries for social media and briefs
 - **Content Analysis**: Analyze articles for guideline compliance
-- **Interactive Demo**: Test the system through an easy-to-use interface
+- **Interactive Demo**: Test the system through an easy-to-use interface 
 
 ## Technical Choices
 
