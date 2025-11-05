@@ -1,6 +1,6 @@
 # RAG Editorial Assistant
 
-An AI-powered editorial assistant that helps journalists and content creators follow editorial guidelines and improve their content using RAG (Retrieval-Augmented Generation). This tool is designed for news organizations, publishing companies, and media outlets to ensure content quality and adherence to editorial standards.
+An AI-powered editorial assistant that helps journalists and content creators follow editorial guidelines and improve their content using RAG (Retrieval-Augmented Generation). This tool is designed for news organizations, publishing companies, and media outlets to ensure content quality and adherence to editorial standards. 
 
 ## Features
 
