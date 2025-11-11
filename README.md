@@ -17,7 +17,7 @@ An AI-powered editorial assistant that helps journalists and content creators fo
    - Chosen for its strong performance in text generation tasks
    - Better at understanding context and generating coherent responses
    - Alternative choices beyond Hugging Face:
-     - GPT-3.5/4: Better performance but higher cost and API dependency
+     - GPT-3.5/4: Better performance but higher cost and API dependency 
      - BLOOM: Multilingual but larger resource requirements
      - LLaMA: Open source but requires more computational resources
 
