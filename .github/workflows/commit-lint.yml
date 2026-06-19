@@ -1,0 +1,42 @@
+name: Commit Message Lint
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  lint-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commit message format
+        run: |
+          PATTERN='^(feature|fix|docs|refactor|test|chore): .+'
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+            COMMITS=$(git log --format="%s" "$BASE".."$HEAD")
+          else
+            COMMITS=$(git log --format="%s" -1)
+          fi
+
+          FAILED=0
+          while IFS= read -r msg; do
+            [ -z "$msg" ] && continue
+            if ! echo "$msg" | grep -qE "$PATTERN"; then
+              echo "❌ Bad commit message: \"$msg\""
+              echo "   Expected format: type: description"
+              echo "   Valid types: feature, fix, docs, refactor, test, chore"
+              FAILED=1
+            else
+              echo "✅ OK: \"$msg\""
+            fi
+          done <<< "$COMMITS"
+
+          exit $FAILED
